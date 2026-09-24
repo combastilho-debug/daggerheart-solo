@@ -3,6 +3,9 @@ import json
 import random
 import re
 import urllib.parse
+import base64
+import io
+from gtts import gTTS
 from google import genai
 
 # ==========================================
@@ -13,7 +16,6 @@ st.set_page_config(page_title="Daggerheart VTT", page_icon="🗡️", layout="wi
 # --- COSMÉTICA: INJEÇÃO DE CSS ---
 st.markdown("""
 <style>
-    /* Estiliza os botões principais */
     div.stButton > button:first-child {
         background-color: #4A0E17;
         color: white;
@@ -21,13 +23,11 @@ st.markdown("""
         border-radius: 8px;
         font-weight: bold;
     }
-    /* Efeito quando passa o mouse no botão */
     div.stButton > button:hover {
         background-color: #FF4B4B;
         border-color: #4A0E17;
         color: white;
     }
-    /* Deixa as caixas de Vida e Esperança mais bonitas */
     div[data-testid="metric-container"] {
         background-color: #1E1E24;
         border: 1px solid #444;
@@ -40,6 +40,18 @@ st.markdown("""
 # --- CHAVE E IA ---
 CHAVE_API = st.secrets["GEMINI_API_KEY"]
 client = genai.Client(api_key=CHAVE_API)
+
+def gerar_audio(texto):
+    """Transforma texto em áudio e converte para texto base64 para não quebrar o Memory Card"""
+    try:
+        # Tira asteriscos para o robô não ler a palavra "asterisco"
+        texto_limpo = texto.replace('*', '').replace('_', '').replace('#', '')
+        tts = gTTS(text=texto_limpo, lang='pt', tld='com.br')
+        fp = io.BytesIO()
+        tts.write_to_fp(fp)
+        return base64.b64encode(fp.getvalue()).decode('utf-8')
+    except Exception as e:
+        return None
 
 def processar_resposta_mestre(texto):
     url_imagem = None
@@ -62,10 +74,9 @@ def processar_resposta_mestre(texto):
     return texto, url_imagem
 
 def gerar_resposta_ia(prompt_novo):
-    # Constrói a memória lendo o que já aconteceu
     historico = ""
     if "mensagens" in st.session_state:
-        for msg in st.session_state.mensagens[-8:]: # Lembra dos últimos 8 turnos
+        for msg in st.session_state.mensagens[-8:]:
             papel = "Mestre" if msg["role"] == "mestre" else "Jogador"
             historico += f"\n{papel}: {msg['content']}"
 
@@ -92,7 +103,6 @@ def gerar_resposta_ia(prompt_novo):
 st.sidebar.title("🗡️ Daggerheart VTT")
 aba = st.sidebar.radio("Navegação:", ["🎲 Jogar", "📝 Criar Personagem", "💾 Memory Card", "📖 Regras"])
 
-# Mostra a ficha na barra lateral apenas se já tiver personagem criado (COM O NOVO VISUAL)
 if "heroi" in st.session_state:
     st.sidebar.markdown("---")
     st.sidebar.subheader(f"🛡️ {st.session_state.heroi['nome']}")
@@ -108,7 +118,6 @@ if "heroi" in st.session_state:
 # 3. CONTEÚDO DAS PÁGINAS
 # ==========================================
 
-# --- PÁGINA: REGRAS ---
 if aba == "📖 Regras":
     st.header("📖 Como Jogar Daggerheart")
     st.write("Daggerheart é movido pela dualidade entre Esperança e Medo. Toda vez que você faz uma ação arriscada, o sistema rola **2d12** (um Dado de Esperança e um Dado de Medo) e soma o seu modificador (Agilidade).")
@@ -116,17 +125,12 @@ if aba == "📖 Regras":
     * **Com Esperança:** Se o dado de Esperança for maior, você tem sucesso com benefícios e ganha **+1 Ponto de Esperança**.
     * **Com Medo:** Se o dado de Medo for maior, você pode até ter sucesso, mas sofrerá uma complicação séria ou tomará dano (perdendo HP). O Mestre narra a ameaça.
     * **Sucesso Crítico:** Se os dois dados derem o mesmo número, é um acerto espetacular!
-    
-    Basta declarar o que você quer fazer na aba *Jogar*, e o motor rola a matemática e aplica o dano/esperança na sua ficha automaticamente!
     """)
 
-# --- PÁGINA: CRIAR PERSONAGEM ---
 elif aba == "📝 Criar Personagem":
     st.header("📝 Ficha do Herói")
-    
     opcao_heroi = st.selectbox("Escolha um perfil:", ["Guerreiro (Hookton - Sobrevivência)", "Ladino (Foco em Agilidade)", "Mago (Foco em Esperança)", "Criar do Zero"])
     
-    # Preenche os valores baseados na escolha
     if opcao_heroi.startswith("Guerreiro"):
         nome_def, classe_def, hp_def, esp_def, agi_def = "Hookton", "Guerreiro", 6, 2, 1
     elif opcao_heroi.startswith("Ladino"):
@@ -148,16 +152,13 @@ elif aba == "📝 Criar Personagem":
             st.session_state.heroi = {"nome": nome, "classe": classe, "agilidade": agilidade}
             st.session_state.hp = hp
             st.session_state.esperanca = esperanca
-            st.session_state.mensagens = [] # Zera a memória para a nova aventura
+            st.session_state.mensagens = []
             st.success("Herói criado! Vá para a aba 'Jogar' no menu lateral.")
 
-# --- PÁGINA: MEMORY CARD (SALVAR/CARREGAR) ---
 elif aba == "💾 Memory Card":
     st.header("💾 Salvar e Carregar")
-    
     st.subheader("Fazer Backup (Salvar)")
     if "heroi" in st.session_state and "mensagens" in st.session_state:
-        # Empacota todas as variáveis de sessão em um arquivo
         save_data = {
             "heroi": st.session_state.heroi,
             "hp": st.session_state.hp,
@@ -183,41 +184,44 @@ elif aba == "💾 Memory Card":
         except Exception as e:
             st.error("Arquivo inválido ou corrompido.")
 
-# --- PÁGINA: JOGAR (O MOTOR PRINCIPAL) ---
 elif aba == "🎲 Jogar":
     if "heroi" not in st.session_state:
         st.warning("⚠️ Você ainda não tem um personagem. Vá no menu lateral em 'Criar Personagem'!")
     else:
-        # Se for o início absoluto do jogo, pede pro mestre narrar a entrada
         if len(st.session_state.mensagens) == 0:
-            with st.spinner("O Mestre está preparando a cena inicial..."):
+            with st.spinner("O Mestre está preparando a cena inicial (e gravando a voz)..."):
                 prompt_abertura = f"Narre a cena inicial para {st.session_state.heroi['nome']} entrando na Caverna do Cão D'Água. Termine perguntando o que ele faz. INCLUA UMA TAG [IMAGEM] DO CENÁRIO!"
                 texto_inicial = gerar_resposta_ia(prompt_abertura)
                 texto_limpo, url_imagem = processar_resposta_mestre(texto_inicial)
                 
                 msg_inicial = {"role": "mestre", "content": texto_limpo}
                 if url_imagem: msg_inicial["image"] = url_imagem
+                
+                # Gera o áudio da mensagem
+                audio_b64 = gerar_audio(texto_limpo)
+                if audio_b64: msg_inicial["audio"] = audio_b64
+                    
                 st.session_state.mensagens.append(msg_inicial)
                 st.rerun()
 
-        # Renderiza a conversa
+        # Renderiza a conversa e toca os áudios
         for msg in st.session_state.mensagens:
             if msg["role"] == "mestre":
                 with st.chat_message("assistant", avatar="🧙‍♂️"):
                     st.write(msg["content"])
+                    # Toca o áudio se existir
+                    if "audio" in msg:
+                        st.audio(base64.b64decode(msg["audio"]), format="audio/mp3")
                     if "image" in msg:
                         st.image(msg["image"], use_container_width=True)
             else:
                 with st.chat_message("user", avatar="🗡️"):
                     st.write(msg["content"])
 
-        # O turno do jogador
         acao_jogador = st.chat_input("O que você faz?")
         if acao_jogador:
-            # 1. Guarda a ação na tela
             st.session_state.mensagens.append({"role": "jogador", "content": acao_jogador})
             
-            # 2. Rola os dados de Daggerheart
             agilidade = st.session_state.heroi['agilidade']
             dado_esperanca = random.randint(1, 12)
             dado_medo = random.randint(1, 12)
@@ -233,13 +237,17 @@ elif aba == "🎲 Jogar":
             texto_dados = f"🎲 **Rolagem:** Esp ({dado_esperanca}) | Medo ({dado_medo}) | Agi (+{agilidade}) = **Total: {total} ({resultado_tipo})**"
             st.session_state.mensagens.append({"role": "mestre", "content": texto_dados})
             
-            # 3. Pede a narração do mestre
             prompt_turno = f"A ação do jogador foi: '{acao_jogador}'. Mecânica rolada: {texto_dados}. Narre o resultado, aplique perdas de HP se foi Com Medo, ou dê ganhos se foi Com Esperança. Termine com a tag [STATUS]."
             resposta = gerar_resposta_ia(prompt_turno)
             texto_limpo, url_imagem = processar_resposta_mestre(resposta)
             
             nova_msg = {"role": "mestre", "content": texto_limpo}
             if url_imagem: nova_msg["image"] = url_imagem
+            
+            # Gera o áudio do novo turno
+            audio_b64 = gerar_audio(texto_limpo)
+            if audio_b64: nova_msg["audio"] = audio_b64
+                
             st.session_state.mensagens.append(nova_msg)
             
             st.rerun()
