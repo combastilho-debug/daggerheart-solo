@@ -1,0 +1,13 @@
+{
+  "name": "Hookton",
+  "class": "Warrior",
+  "subclass": "Slayer",
+  "resources": {
+    "hope": 5,
+    "stress": 1,
+    "hp": 6
+  },
+  "attributes": {
+    "agility": 2
+  }
+}
