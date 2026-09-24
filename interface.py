@@ -44,9 +44,7 @@ client = genai.Client(api_key=CHAVE_API)
 def gerar_audio(texto):
     """Transforma texto em áudio neural com Edge-TTS e converte para base64"""
     async def _gerar():
-        # Limpa o texto para a IA não tentar ler os asteriscos do negrito
         texto_limpo = texto.replace('*', '').replace('_', '').replace('#', '')
-        # Usa a voz neural masculina em PT-BR (Antonio)
         communicate = edge_tts.Communicate(texto_limpo, "pt-BR-AntonioNeural")
         audio_data = bytearray()
         async for chunk in communicate.stream():
@@ -55,7 +53,6 @@ def gerar_audio(texto):
         return bytes(audio_data)
 
     try:
-        # Cria um laço assíncrono isolado para funcionar bem com o Streamlit
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         audio_bytes = loop.run_until_complete(_gerar())
@@ -66,7 +63,6 @@ def gerar_audio(texto):
 
 def processar_resposta_mestre(texto):
     url_imagem = None
-    # Procura e gera a imagem
     match_img = re.search(r'\[IMAGEM\](.*)', texto, re.IGNORECASE)
     if match_img:
         prompt_imagem = match_img.group(1).strip()
@@ -75,7 +71,6 @@ def processar_resposta_mestre(texto):
         url_imagem = f"https://image.pollinations.ai/prompt/{prompt_codificado}?width=800&height=400&nologo=true&seed={semente}"
         texto = re.sub(r'\[IMAGEM\].*', '', texto, flags=re.IGNORECASE).strip()
 
-    # Procura e atualiza os status
     match_status = re.search(r'\[STATUS\] HP:\s*(\d+)\s*\|\s*ESP:\s*(\d+)', texto, re.IGNORECASE)
     if match_status:
         st.session_state.hp = int(match_status.group(1))
@@ -201,7 +196,11 @@ elif aba == "🎲 Jogar":
     else:
         if len(st.session_state.mensagens) == 0:
             with st.spinner("O Mestre está preparando a cena inicial (e gravando a voz)..."):
-                prompt_abertura = f"Narre a cena inicial para {st.session_state.heroi['nome']} entrando na Caverna do Cão D'Água. Termine perguntando o que ele faz. INCLUA UMA TAG [IMAGEM] DO CENÁRIO!"
+                
+                # ---> AQUI ESTÁ A MUDANÇA NA HISTÓRIA <---
+                prompt_abertura = f"Narre a cena inicial para {st.session_state.heroi['nome']} entrando numa taverna movimentada e rústica. O taverneiro, um sujeito carismático chamado Vander, reconhece o herói e aponta para o Quadro de Aventuras. Faça o Vander apresentar brevemente 3 opções de missões diferentes, intrigantes e perigosas que estão disponíveis. Termine a narração perguntando qual contrato o herói vai aceitar. INCLUA UMA TAG [IMAGEM] DA TAVERNA COM O VANDER!"
+                # ----------------------------------------
+                
                 texto_inicial = gerar_resposta_ia(prompt_abertura)
                 texto_limpo, url_imagem = processar_resposta_mestre(texto_inicial)
                 
