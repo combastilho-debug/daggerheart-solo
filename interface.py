@@ -4,8 +4,8 @@ import random
 import re
 import urllib.parse
 import base64
-import io
-from gtts import gTTS
+import asyncio
+import edge_tts
 from google import genai
 
 # ==========================================
@@ -42,14 +42,25 @@ CHAVE_API = st.secrets["GEMINI_API_KEY"]
 client = genai.Client(api_key=CHAVE_API)
 
 def gerar_audio(texto):
-    """Transforma texto em áudio e converte para texto base64 para não quebrar o Memory Card"""
-    try:
-        # Tira asteriscos para o robô não ler a palavra "asterisco"
+    """Transforma texto em áudio neural com Edge-TTS e converte para base64"""
+    async def _gerar():
+        # Limpa o texto para a IA não tentar ler os asteriscos do negrito
         texto_limpo = texto.replace('*', '').replace('_', '').replace('#', '')
-        tts = gTTS(text=texto_limpo, lang='pt', tld='com.br')
-        fp = io.BytesIO()
-        tts.write_to_fp(fp)
-        return base64.b64encode(fp.getvalue()).decode('utf-8')
+        # Usa a voz neural masculina em PT-BR (Antonio)
+        communicate = edge_tts.Communicate(texto_limpo, "pt-BR-AntonioNeural")
+        audio_data = bytearray()
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_data.extend(chunk["data"])
+        return bytes(audio_data)
+
+    try:
+        # Cria um laço assíncrono isolado para funcionar bem com o Streamlit
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        audio_bytes = loop.run_until_complete(_gerar())
+        loop.close()
+        return base64.b64encode(audio_bytes).decode('utf-8')
     except Exception as e:
         return None
 
@@ -197,19 +208,16 @@ elif aba == "🎲 Jogar":
                 msg_inicial = {"role": "mestre", "content": texto_limpo}
                 if url_imagem: msg_inicial["image"] = url_imagem
                 
-                # Gera o áudio da mensagem
                 audio_b64 = gerar_audio(texto_limpo)
                 if audio_b64: msg_inicial["audio"] = audio_b64
                     
                 st.session_state.mensagens.append(msg_inicial)
                 st.rerun()
 
-        # Renderiza a conversa e toca os áudios
         for msg in st.session_state.mensagens:
             if msg["role"] == "mestre":
                 with st.chat_message("assistant", avatar="🧙‍♂️"):
                     st.write(msg["content"])
-                    # Toca o áudio se existir
                     if "audio" in msg:
                         st.audio(base64.b64decode(msg["audio"]), format="audio/mp3")
                     if "image" in msg:
@@ -244,7 +252,6 @@ elif aba == "🎲 Jogar":
             nova_msg = {"role": "mestre", "content": texto_limpo}
             if url_imagem: nova_msg["image"] = url_imagem
             
-            # Gera o áudio do novo turno
             audio_b64 = gerar_audio(texto_limpo)
             if audio_b64: nova_msg["audio"] = audio_b64
                 
