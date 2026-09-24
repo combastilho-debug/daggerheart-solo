@@ -9,6 +9,35 @@ from google import genai
 # 1. CONFIGURAÇÕES E FUNÇÕES DO SISTEMA
 # ==========================================
 st.set_page_config(page_title="Daggerheart VTT", page_icon="🗡️", layout="wide")
+
+# --- COSMÉTICA: INJEÇÃO DE CSS ---
+st.markdown("""
+<style>
+    /* Estiliza os botões principais */
+    div.stButton > button:first-child {
+        background-color: #4A0E17;
+        color: white;
+        border: 1px solid #FF4B4B;
+        border-radius: 8px;
+        font-weight: bold;
+    }
+    /* Efeito quando passa o mouse no botão */
+    div.stButton > button:hover {
+        background-color: #FF4B4B;
+        border-color: #4A0E17;
+        color: white;
+    }
+    /* Deixa as caixas de Vida e Esperança mais bonitas */
+    div[data-testid="metric-container"] {
+        background-color: #1E1E24;
+        border: 1px solid #444;
+        padding: 10px;
+        border-radius: 10px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# --- CHAVE E IA ---
 CHAVE_API = st.secrets["GEMINI_API_KEY"]
 client = genai.Client(api_key=CHAVE_API)
 
@@ -63,14 +92,17 @@ def gerar_resposta_ia(prompt_novo):
 st.sidebar.title("🗡️ Daggerheart VTT")
 aba = st.sidebar.radio("Navegação:", ["🎲 Jogar", "📝 Criar Personagem", "💾 Memory Card", "📖 Regras"])
 
-# Mostra a ficha na barra lateral apenas se já tiver personagem criado
+# Mostra a ficha na barra lateral apenas se já tiver personagem criado (COM O NOVO VISUAL)
 if "heroi" in st.session_state:
     st.sidebar.markdown("---")
     st.sidebar.subheader(f"🛡️ {st.session_state.heroi['nome']}")
-    st.sidebar.write(f"**Classe:** {st.session_state.heroi['classe']}")
-    st.sidebar.write(f"❤️ **Vida:** {st.session_state.hp}")
-    st.sidebar.write(f"✨ **Esperança:** {st.session_state.esperanca}")
-    st.sidebar.write(f"🏃 **Agilidade:** +{st.session_state.heroi['agilidade']}")
+    st.sidebar.caption(f"Classe: {st.session_state.heroi['classe']}")
+    
+    c1, c2 = st.sidebar.columns(2)
+    c1.metric(label="❤️ Vida", value=st.session_state.hp)
+    c2.metric(label="✨ Esperança", value=st.session_state.esperanca)
+    
+    st.sidebar.metric(label="🏃 Agilidade", value=f"+{st.session_state.heroi['agilidade']}")
 
 # ==========================================
 # 3. CONTEÚDO DAS PÁGINAS
