@@ -5,48 +5,25 @@ import re
 import urllib.parse
 from google import genai
 
-# 1. Configuração da página
-st.set_page_config(page_title="Daggerheart VTT", page_icon="🗡️")
+# ==========================================
+# 1. CONFIGURAÇÕES E FUNÇÕES DO SISTEMA
+# ==========================================
+st.set_page_config(page_title="Daggerheart VTT", page_icon="🗡️", layout="wide")
 CHAVE_API = st.secrets["GEMINI_API_KEY"]
+client = genai.Client(api_key=CHAVE_API)
 
-# 2. Carrega a ficha
-if "hookton" not in st.session_state:
-    with open("hookton.json", "r", encoding="utf-8") as arquivo:
-        st.session_state.hookton = json.load(arquivo)
-    
-    st.session_state.hp = st.session_state.hookton['resources']['hp']
-    st.session_state.esperanca = st.session_state.hookton['resources']['hope']
-
-agilidade = st.session_state.hookton.get("stats", {}).get("agility", 1)
-
-# 3. Menu Lateral
-with st.sidebar:
-    st.title("🗡️ Ficha do Herói")
-    st.subheader(st.session_state.hookton['name'])
-    st.write(f"**Classe:** {st.session_state.hookton['class']}")
-    st.write("---")
-    st.write(f"❤️ **Vida:** {st.session_state.hp}")
-    st.write(f"✨ **Esperança:** {st.session_state.esperanca}")
-    st.write(f"🏃 **Agilidade:** +{agilidade}")
-
-# Função mágica atualizada para pescar Imagem E Status!
 def processar_resposta_mestre(texto):
     url_imagem = None
-    
-    # 1. Procura pela tag de IMAGEM
+    # Procura e gera a imagem
     match_img = re.search(r'\[IMAGEM\](.*)', texto, re.IGNORECASE)
     if match_img:
-        # Pega a descrição, limpa espaços e converte para link
         prompt_imagem = match_img.group(1).strip()
         prompt_codificado = urllib.parse.quote(prompt_imagem)
-        # Cria a URL com um formato cinemático (800x400)
-        semente = random.randint(1, 1000) # Para a imagem não repetir
+        semente = random.randint(1, 10000)
         url_imagem = f"https://image.pollinations.ai/prompt/{prompt_codificado}?width=800&height=400&nologo=true&seed={semente}"
-        
-        # Apaga a tag de imagem do texto
         texto = re.sub(r'\[IMAGEM\].*', '', texto, flags=re.IGNORECASE).strip()
 
-    # 2. Procura pela tag de STATUS (a que já fizemos antes)
+    # Procura e atualiza os status
     match_status = re.search(r'\[STATUS\] HP:\s*(\d+)\s*\|\s*ESP:\s*(\d+)', texto, re.IGNORECASE)
     if match_status:
         st.session_state.hp = int(match_status.group(1))
@@ -55,77 +32,182 @@ def processar_resposta_mestre(texto):
 
     return texto, url_imagem
 
-# 4. Inicializa o Cérebro da IA
-if "chat" not in st.session_state:
-    client = genai.Client(api_key=CHAVE_API)
-    st.session_state.chat = client.chats.create(model="gemini-2.5-flash")
-    
-    # Adicionamos a instrução da [IMAGEM] no prompt
-    prompt_abertura = f"""
-    [SISTEMA: Você é o Mestre de Daggerheart. O herói é {st.session_state.hookton['name']}.
+def gerar_resposta_ia(prompt_novo):
+    # Constrói a memória lendo o que já aconteceu
+    historico = ""
+    if "mensagens" in st.session_state:
+        for msg in st.session_state.mensagens[-8:]: # Lembra dos últimos 8 turnos
+            papel = "Mestre" if msg["role"] == "mestre" else "Jogador"
+            historico += f"\n{papel}: {msg['content']}"
+
+    prompt_sistema = f"""
+    [SISTEMA: Você é o Mestre de Daggerheart. O herói é {st.session_state.heroi['nome']} ({st.session_state.heroi['classe']}).
     Vida atual: {st.session_state.hp} | Esperança atual: {st.session_state.esperanca}.
     
-    REGRA 1 (STATUS): NO FINAL DE TODA MENSAGEM, escreva: [STATUS] HP: X | ESP: Y
+    REGRA 1 (STATUS): NO FINAL DE TODA MENSAGEM SUA, escreva: [STATUS] HP: X | ESP: Y
+    REGRA 2 (IMAGEM): Ocasionalmente (para cenas impactantes ou monstros novos), insira no final: [IMAGEM] prompt in english dark fantasy
     
-    REGRA 2 (IMAGEM): Ocasionalmente, quando um monstro novo aparecer ou o cenário for impactante, crie uma imagem inserindo no final: 
-    [IMAGEM] prompt of the scene in dark fantasy style, highly detailed in english
+    O QUE JÁ ACONTECEU ANTES:{historico}
+    ]
     
-    Narre: Hookton em frente à Caverna do Cão D'Água após a explosão. Termine perguntando o que ele faz. 
-    INCLUA UMA TAG [IMAGEM] DESTA CAERNA AGORA!]
+    MENSAGEM ATUAL DO JOGADOR:
+    {prompt_novo}
     """
-    resposta = st.session_state.chat.send_message(prompt_abertura)
     
-    # Processa as duas tags secretas
-    texto_limpo, url_imagem = processar_resposta_mestre(resposta.text)
-    
-    msg_inicial = {"role": "mestre", "content": texto_limpo}
-    if url_imagem:
-        msg_inicial["image"] = url_imagem
-        
-    st.session_state.mensagens = [msg_inicial]
+    resposta = client.models.generate_content(model="gemini-2.5-flash", contents=prompt_sistema)
+    return resposta.text
 
-# 5. Exibe o histórico de mensagens (Agora renderizando imagens!)
-for msg in st.session_state.mensagens:
-    if msg["role"] == "mestre":
-        with st.chat_message("assistant", avatar="🧙‍♂️"):
-            st.write(msg["content"])
-            # Se a mensagem do Mestre tiver uma imagem atrelada, ela aparece aqui!
-            if "image" in msg:
-                st.image(msg["image"], use_container_width=True)
+# ==========================================
+# 2. MENU LATERAL E NAVEGAÇÃO
+# ==========================================
+st.sidebar.title("🗡️ Daggerheart VTT")
+aba = st.sidebar.radio("Navegação:", ["🎲 Jogar", "📝 Criar Personagem", "💾 Memory Card", "📖 Regras"])
+
+# Mostra a ficha na barra lateral apenas se já tiver personagem criado
+if "heroi" in st.session_state:
+    st.sidebar.markdown("---")
+    st.sidebar.subheader(f"🛡️ {st.session_state.heroi['nome']}")
+    st.sidebar.write(f"**Classe:** {st.session_state.heroi['classe']}")
+    st.sidebar.write(f"❤️ **Vida:** {st.session_state.hp}")
+    st.sidebar.write(f"✨ **Esperança:** {st.session_state.esperanca}")
+    st.sidebar.write(f"🏃 **Agilidade:** +{st.session_state.heroi['agilidade']}")
+
+# ==========================================
+# 3. CONTEÚDO DAS PÁGINAS
+# ==========================================
+
+# --- PÁGINA: REGRAS ---
+if aba == "📖 Regras":
+    st.header("📖 Como Jogar Daggerheart")
+    st.write("Daggerheart é movido pela dualidade entre Esperança e Medo. Toda vez que você faz uma ação arriscada, o sistema rola **2d12** (um Dado de Esperança e um Dado de Medo) e soma o seu modificador (Agilidade).")
+    st.markdown("""
+    * **Com Esperança:** Se o dado de Esperança for maior, você tem sucesso com benefícios e ganha **+1 Ponto de Esperança**.
+    * **Com Medo:** Se o dado de Medo for maior, você pode até ter sucesso, mas sofrerá uma complicação séria ou tomará dano (perdendo HP). O Mestre narra a ameaça.
+    * **Sucesso Crítico:** Se os dois dados derem o mesmo número, é um acerto espetacular!
+    
+    Basta declarar o que você quer fazer na aba *Jogar*, e o motor rola a matemática e aplica o dano/esperança na sua ficha automaticamente!
+    """)
+
+# --- PÁGINA: CRIAR PERSONAGEM ---
+elif aba == "📝 Criar Personagem":
+    st.header("📝 Ficha do Herói")
+    
+    opcao_heroi = st.selectbox("Escolha um perfil:", ["Guerreiro (Hookton - Sobrevivência)", "Ladino (Foco em Agilidade)", "Mago (Foco em Esperança)", "Criar do Zero"])
+    
+    # Preenche os valores baseados na escolha
+    if opcao_heroi.startswith("Guerreiro"):
+        nome_def, classe_def, hp_def, esp_def, agi_def = "Hookton", "Guerreiro", 6, 2, 1
+    elif opcao_heroi.startswith("Ladino"):
+        nome_def, classe_def, hp_def, esp_def, agi_def = "Kael", "Ladino", 5, 2, 3
+    elif opcao_heroi.startswith("Mago"):
+        nome_def, classe_def, hp_def, esp_def, agi_def = "Elara", "Maga", 4, 4, 0
     else:
-        with st.chat_message("user", avatar="🗡️"):
-            st.write(msg["content"])
+        nome_def, classe_def, hp_def, esp_def, agi_def = "", "", 5, 2, 1
 
-# 6. Caixa de texto para o jogador
-acao_jogador = st.chat_input(f"O que {st.session_state.hookton['name']} faz?")
+    with st.form("form_personagem"):
+        nome = st.text_input("Nome do Personagem:", value=nome_def)
+        classe = st.text_input("Classe / Subclasse:", value=classe_def)
+        col1, col2, col3 = st.columns(3)
+        with col1: hp = st.number_input("❤️ Vida Máxima", value=hp_def)
+        with col2: esperanca = st.number_input("✨ Esperança Inicial", value=esp_def)
+        with col3: agilidade = st.number_input("🏃 Modificador de Agilidade", value=agi_def)
+        
+        if st.form_submit_button("Começar Campanha"):
+            st.session_state.heroi = {"nome": nome, "classe": classe, "agilidade": agilidade}
+            st.session_state.hp = hp
+            st.session_state.esperanca = esperanca
+            st.session_state.mensagens = [] # Zera a memória para a nova aventura
+            st.success("Herói criado! Vá para a aba 'Jogar' no menu lateral.")
 
-if acao_jogador:
-    st.session_state.mensagens.append({"role": "jogador", "content": acao_jogador})
+# --- PÁGINA: MEMORY CARD (SALVAR/CARREGAR) ---
+elif aba == "💾 Memory Card":
+    st.header("💾 Salvar e Carregar")
     
-    dado_esperanca = random.randint(1, 12)
-    dado_medo = random.randint(1, 12)
-    total = dado_esperanca + dado_medo + agilidade
-    
-    if dado_esperanca == dado_medo:
-        resultado_tipo = "SUCESSO CRÍTICO"
-    elif dado_esperanca > dado_medo:
-        resultado_tipo = "COM ESPERANÇA"
+    st.subheader("Fazer Backup (Salvar)")
+    if "heroi" in st.session_state and "mensagens" in st.session_state:
+        # Empacota todas as variáveis de sessão em um arquivo
+        save_data = {
+            "heroi": st.session_state.heroi,
+            "hp": st.session_state.hp,
+            "esperanca": st.session_state.esperanca,
+            "mensagens": st.session_state.mensagens
+        }
+        json_save = json.dumps(save_data, ensure_ascii=False)
+        st.download_button("⬇️ Baixar Save (Memory Card)", data=json_save, file_name=f"save_{st.session_state.heroi['nome']}.json", mime="application/json")
     else:
-        resultado_tipo = "COM MEDO"
+        st.write("Comece uma aventura primeiro para poder salvar o jogo.")
         
-    texto_dados = f"🎲 **Rolagem:** Esp ({dado_esperanca}) | Medo ({dado_medo}) | Agi (+{agilidade}) = **Total: {total} ({resultado_tipo})**"
-    st.session_state.mensagens.append({"role": "mestre", "content": texto_dados})
-    
-    prompt_turno = f"Ação: '{acao_jogador}'. Mecânica: {texto_dados}. Narre as consequências, atualize o HP/Esperança e use a tag [STATUS]. Se algo novo e visualmente impactante aparecer, inclua a tag [IMAGEM]."
-    
-    resposta = st.session_state.chat.send_message(prompt_turno)
-    
-    # Processa e guarda a nova mensagem com possível imagem
-    texto_limpo, url_imagem = processar_resposta_mestre(resposta.text)
-    nova_msg = {"role": "mestre", "content": texto_limpo}
-    if url_imagem:
-        nova_msg["image"] = url_imagem
-        
-    st.session_state.mensagens.append(nova_msg)
-    
-    st.rerun()
+    st.markdown("---")
+    st.subheader("Continuar Aventura (Carregar)")
+    arquivo = st.file_uploader("⬆️ Suba o seu arquivo de save (.json)", type=["json"])
+    if arquivo is not None:
+        try:
+            save_data = json.load(arquivo)
+            st.session_state.heroi = save_data["heroi"]
+            st.session_state.hp = save_data["hp"]
+            st.session_state.esperanca = save_data["esperanca"]
+            st.session_state.mensagens = save_data["mensagens"]
+            st.success(f"Progresso de {st.session_state.heroi['nome']} carregado! Vá para a aba 'Jogar'.")
+        except Exception as e:
+            st.error("Arquivo inválido ou corrompido.")
+
+# --- PÁGINA: JOGAR (O MOTOR PRINCIPAL) ---
+elif aba == "🎲 Jogar":
+    if "heroi" not in st.session_state:
+        st.warning("⚠️ Você ainda não tem um personagem. Vá no menu lateral em 'Criar Personagem'!")
+    else:
+        # Se for o início absoluto do jogo, pede pro mestre narrar a entrada
+        if len(st.session_state.mensagens) == 0:
+            with st.spinner("O Mestre está preparando a cena inicial..."):
+                prompt_abertura = f"Narre a cena inicial para {st.session_state.heroi['nome']} entrando na Caverna do Cão D'Água. Termine perguntando o que ele faz. INCLUA UMA TAG [IMAGEM] DO CENÁRIO!"
+                texto_inicial = gerar_resposta_ia(prompt_abertura)
+                texto_limpo, url_imagem = processar_resposta_mestre(texto_inicial)
+                
+                msg_inicial = {"role": "mestre", "content": texto_limpo}
+                if url_imagem: msg_inicial["image"] = url_imagem
+                st.session_state.mensagens.append(msg_inicial)
+                st.rerun()
+
+        # Renderiza a conversa
+        for msg in st.session_state.mensagens:
+            if msg["role"] == "mestre":
+                with st.chat_message("assistant", avatar="🧙‍♂️"):
+                    st.write(msg["content"])
+                    if "image" in msg:
+                        st.image(msg["image"], use_container_width=True)
+            else:
+                with st.chat_message("user", avatar="🗡️"):
+                    st.write(msg["content"])
+
+        # O turno do jogador
+        acao_jogador = st.chat_input("O que você faz?")
+        if acao_jogador:
+            # 1. Guarda a ação na tela
+            st.session_state.mensagens.append({"role": "jogador", "content": acao_jogador})
+            
+            # 2. Rola os dados de Daggerheart
+            agilidade = st.session_state.heroi['agilidade']
+            dado_esperanca = random.randint(1, 12)
+            dado_medo = random.randint(1, 12)
+            total = dado_esperanca + dado_medo + agilidade
+            
+            if dado_esperanca == dado_medo:
+                resultado_tipo = "SUCESSO CRÍTICO"
+            elif dado_esperanca > dado_medo:
+                resultado_tipo = "COM ESPERANÇA"
+            else:
+                resultado_tipo = "COM MEDO"
+                
+            texto_dados = f"🎲 **Rolagem:** Esp ({dado_esperanca}) | Medo ({dado_medo}) | Agi (+{agilidade}) = **Total: {total} ({resultado_tipo})**"
+            st.session_state.mensagens.append({"role": "mestre", "content": texto_dados})
+            
+            # 3. Pede a narração do mestre
+            prompt_turno = f"A ação do jogador foi: '{acao_jogador}'. Mecânica rolada: {texto_dados}. Narre o resultado, aplique perdas de HP se foi Com Medo, ou dê ganhos se foi Com Esperança. Termine com a tag [STATUS]."
+            resposta = gerar_resposta_ia(prompt_turno)
+            texto_limpo, url_imagem = processar_resposta_mestre(resposta)
+            
+            nova_msg = {"role": "mestre", "content": texto_limpo}
+            if url_imagem: nova_msg["image"] = url_imagem
+            st.session_state.mensagens.append(nova_msg)
+            
+            st.rerun()
